@@ -1,0 +1,29 @@
+# Next.js (Ordner web)
+web/node_modules/
+web/.next/
+web/out/
+web/.env.local
+web/.env*.local
+web/storage/
+web/*.tsbuildinfo
+web/npm-debug.log*
+web/.vercel
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Geheimnisse / lokale Backups
+backup.txt
+web/android/keystore/
+web/android/key.properties
+web/android/dist/
+web/android/app/build/
+web/android/.gradle/
+web/android/local.properties
+
+*.jks
+**/SIGNING-CREDENTIALS.txt
+
+# Nur das lokale Modell-Verzeichnis im Projektroot (nicht web/src/lib/models)
+/models/

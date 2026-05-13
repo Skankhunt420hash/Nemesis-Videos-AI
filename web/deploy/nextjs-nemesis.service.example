@@ -1,0 +1,16 @@
+[Unit]
+Description=Nemesis Videos AI (Next.js)
+After=network.target comfyui.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/nemesis-video-ai/web
+Environment=NODE_ENV=production
+Environment=PORT=3040
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
