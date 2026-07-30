@@ -20,6 +20,7 @@ export async function scanModels(): Promise<
         directory: relativeDir,
         bytes,
         ready: bytes >= def.minReadyBytes,
+        sourceUrl: def.sourceUrl || undefined,
       };
     }),
   );

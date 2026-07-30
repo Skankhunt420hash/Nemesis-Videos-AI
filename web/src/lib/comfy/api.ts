@@ -164,6 +164,7 @@ export type PhotoToolKind =
   | "retouch";
 
 export interface GenerationSubmitPayload {
+  clientId?: string;
   mode: GenMode;
   prompt: string;
   negativePrompt?: string;
@@ -256,6 +257,7 @@ export interface ModelStatusItem {
   directory: string;
   bytes: number;
   ready: boolean;
+  sourceUrl?: string;
 }
 
 export async function getModelsStatusApi(): Promise<{

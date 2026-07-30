@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { MODEL_ENTRIES } from "@/lib/models/storage";
-import { appendDownloadLog } from "@/lib/models/downloadLog";
 import type { ModelKey } from "@/lib/models/storage";
+import { MODEL_ENTRIES } from "@/lib/models/storage";
+import { downloadModelByKey } from "@/lib/models/download";
+import { appendDownloadLog } from "@/lib/models/downloadLog";
 
 export const runtime = "nodejs";
 
@@ -12,8 +13,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!known) {
     return NextResponse.json({ error: "Unbekanntes Modell." }, { status: 400 });
   }
-  await appendDownloadLog(
-    `${known.key}: Hinweis — kopiere die Gewichte nach storage/models/${known.subfolder}/ oder nutze huggingface-cli auf diesem Rechner (HF nicht automatisch).`,
-  );
-  return NextResponse.json({ ok: true });
+  const modelKey = known.key;
+
+  if (!known.sourceUrl) {
+    await appendDownloadLog(
+      `${known.key}: Keine sourceUrl gesetzt. Setze MODEL_${known.key.toUpperCase()}_URL für echten Download.`,
+    );
+    return NextResponse.json({ ok: false, download: false, reason: "sourceUrl fehlt" }, { status: 400 });
+  }
+
+  try {
+    const out = await downloadModelByKey(modelKey);
+    return NextResponse.json({ ok: true, download: true, path: out.path });
+  } catch (e) {
+    return NextResponse.json({ ok: false, download: false, error: (e as Error).message }, { status: 502 });
+  }
 }

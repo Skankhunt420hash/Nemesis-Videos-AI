@@ -19,6 +19,7 @@ export interface MotionControl {
 }
 
 export interface GenerationRequest {
+  clientId?: string;
   mode: GenerationMode;
   prompt: string;
   negativePrompt?: string;

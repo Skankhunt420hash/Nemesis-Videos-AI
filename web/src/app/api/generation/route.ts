@@ -50,7 +50,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     try {
       const remoteId =
         backend === "local"
-          ? await dispatchLocal(normalized)
+          ? await dispatchLocal(normalized, normalized.clientId)
           : await dispatchCloud(normalized);
       await updateJob(
         job.id,

@@ -28,9 +28,32 @@ import {
 } from "@/lib/comfy/api";
 import { buildViewUrl, extractOutputImages } from "@/lib/comfy/history";
 import type { ComfyWorkflow, OutputImageRef } from "@/lib/comfy/types";
+import { makeWorkflowTemplate } from "@/lib/comfy/templates";
 import { useComfySocket } from "@/hooks/useComfySocket";
 
 const EMPTY_WORKFLOW = "{\n\n}";
+
+function validateWorkflow(workflow: unknown): string | null {
+  if (!workflow || typeof workflow !== "object" || Array.isArray(workflow)) {
+    return "Workflow muss ein Objekt sein.";
+  }
+
+  const entries = Object.entries(workflow as Record<string, unknown>);
+  if (entries.length === 0) return "Workflow ist leer.";
+
+  for (const [id, node] of entries) {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return `Node ${id} ist ungültig.`;
+    const n = node as Record<string, unknown>;
+    if (typeof n.class_type !== "string" || !n.class_type.trim()) {
+      return `Node ${id} hat kein class_type.`;
+    }
+    if (!n.inputs || typeof n.inputs !== "object" || Array.isArray(n.inputs)) {
+      return `Node ${id} hat keine inputs.`;
+    }
+  }
+
+  return null;
+}
 
 function fileUrlFromRelativePath(relativePath: string): string {
   const encoded = relativePath.split("/").map(encodeURIComponent).join("/");
@@ -110,9 +133,15 @@ export function ComfyApp() {
   const [brainRating, setBrainRating] = useState(4);
 
   const [modelsInfo, setModelsInfo] = useState<
-    Array<{ key: "wan21" | "wan22" | "ltx2"; name: string; bytes: number; ready: boolean }>
+    Array<{
+      key: "wan21" | "wan22" | "ltx2";
+      name: string;
+      bytes: number;
+      ready: boolean;
+      sourceUrl?: string;
+    }>
   >([]);
-  const [downloadStatus] = useState<{ status?: string; model?: string; error?: string }>({});
+  const [downloadStatus, setDownloadStatus] = useState<{ status?: string; model?: string; error?: string }>({});
   const [downloadLog, setDownloadLog] = useState("");
   const [appStatus, setAppStatus] = useState<AppStatusResponse | null>(null);
 
@@ -167,6 +196,7 @@ export function ComfyApp() {
     try {
       const status = await getModelsStatusApi();
       setModelsInfo(status.models);
+      setDownloadStatus(status.download);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -222,6 +252,11 @@ export function ComfyApp() {
       workflow = JSON.parse(workflowText) as ComfyWorkflow;
     } catch (e) {
       setError(`Ungültiges JSON: ${(e as Error).message}`);
+      return;
+    }
+    const wfError = validateWorkflow(workflow);
+    if (wfError) {
+      setError(wfError);
       return;
     }
     setBusy(true);
@@ -336,6 +371,15 @@ export function ComfyApp() {
     }
   }, [helperInputKey, helperNodeId, helperValue, workflowText]);
 
+  const loadTemplate = useCallback(
+    (mode: GenMode, tool?: PhotoToolKind) => {
+      setGenMode(mode);
+      if (tool) setPhotoTool(tool);
+      setWorkflowText(JSON.stringify(makeWorkflowTemplate(mode, tool), null, 2));
+    },
+    [],
+  );
+
   const onDeleteStored = useCallback(
     async (relativePath: string) => {
       try {
@@ -380,6 +424,7 @@ export function ComfyApp() {
       if (photoTool === "enhance") mode = "upscale";
     }
     return {
+      clientId,
       mode,
       prompt: genPrompt,
       negativePrompt: genNegPrompt,
@@ -399,6 +444,7 @@ export function ComfyApp() {
       },
     };
   }, [
+    clientId,
     genBackend,
     genDuration,
     genFps,
@@ -575,6 +621,42 @@ export function ComfyApp() {
         </a>
       </nav>
 
+      <section className="rounded-lg border border-zinc-800 bg-zinc-950/80 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-medium text-zinc-300">Tools</h2>
+          <p className="text-[11px] text-zinc-500">Schnellwahl für Modi + Templates</p>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {[
+            ["t2v", "Text→Video"],
+            ["i2v", "Bild→Video"],
+            ["i2i", "KI-Foto"],
+            ["upscale", "Upscale"],
+          ].map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => loadTemplate(mode as GenMode, mode === "i2i" ? photoTool : undefined)}
+              className={`rounded px-3 py-1.5 text-xs ${genMode === mode ? "bg-violet-500 text-white" : "border border-zinc-700 bg-zinc-900 text-zinc-200"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {(["generate", "enhance", "style", "background-remove", "retouch"] as PhotoToolKind[]).map((tool) => (
+            <button
+              key={tool}
+              type="button"
+              onClick={() => loadTemplate("i2i", tool)}
+              className={`rounded px-3 py-1.5 text-xs ${photoTool === tool ? "bg-emerald-500 text-zinc-950" : "border border-zinc-700 bg-zinc-900 text-zinc-200"}`}
+            >
+              {tool}
+            </button>
+          ))}
+        </div>
+      </section>
+
       <div className="grid gap-6 lg:grid-cols-2">
         <section id="models" className="scroll-mt-20 flex flex-col gap-3">
           <h2 className="text-sm font-medium text-zinc-300">Modell-Zentrale</h2>
@@ -591,13 +673,14 @@ export function ComfyApp() {
                   <p className="text-[11px] text-zinc-500">
                     {(m.bytes / (1024 * 1024)).toFixed(1)} MB erkannt
                   </p>
+                  {m.sourceUrl ? <p className="truncate text-[11px] text-zinc-600">Quelle bereit</p> : <p className="text-[11px] text-zinc-600">Quelle fehlt</p>}
                   {!m.ready ? (
                     <button
                       type="button"
                       onClick={() => void startModelDownload(m.key)}
                       className="mt-2 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
                     >
-                      Hinweis loggen
+                      {m.sourceUrl ? "Download" : "Hinweis"}
                     </button>
                   ) : null}
                 </div>
@@ -609,7 +692,7 @@ export function ComfyApp() {
                 onClick={() => void startMissingModels()}
                 className="rounded bg-emerald-500 px-3 py-1 text-xs font-medium text-zinc-900"
               >
-                Fehlende Modelle (Log)
+                Fehlende Modelle
               </button>
               <button
                 type="button"
@@ -620,6 +703,8 @@ export function ComfyApp() {
               </button>
             </div>
             <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-zinc-800 bg-zinc-900 p-2 text-[11px] text-zinc-400">
+              {downloadStatus.status ? `Status: ${downloadStatus.status}\n` : ""}
+              {downloadStatus.model ? `Modell: ${downloadStatus.model}\n` : ""}
               {downloadLog || "Kein Log."}
               {downloadStatus.error ? `\n${downloadStatus.error}` : ""}
             </pre>

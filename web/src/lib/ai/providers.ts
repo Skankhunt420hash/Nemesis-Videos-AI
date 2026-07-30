@@ -172,16 +172,22 @@ function buildWorkflow(
   };
 }
 
-export async function dispatchLocal(request: GenerationRequest): Promise<string> {
+export async function dispatchLocal(
+  request: GenerationRequest,
+  clientId?: string,
+): Promise<string> {
   const available = await getAvailableNodes();
   const nodeFallbacks: string[] = [];
   const { workflow } = buildWorkflow(request, available, nodeFallbacks);
-  void nodeFallbacks;
+
+  if (nodeFallbacks.length > 0) {
+    throw new Error(`ComfyUI-Knoten fehlen: ${nodeFallbacks.join("; ")}`);
+  }
 
   const res = await fetch(`${getComfyOrigin()}/prompt`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ prompt: workflow, client_id: randomUUID() }),
+    body: JSON.stringify({ prompt: workflow, client_id: clientId || randomUUID() }),
     signal: AbortSignal.timeout(120_000),
   });
   if (!res.ok) throw new Error(`Comfy queue failed: HTTP ${res.status}`);
