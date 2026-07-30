@@ -194,6 +194,10 @@ export async function exportAssets3dCollectionApi(collection: string): Promise<u
   return res.json();
 }
 
+export function exportAssets3dCollectionZipUrl(collection: string): string {
+  return `/api/assets3d?exportZip=${encodeURIComponent(collection)}`;
+}
+
 export async function deleteLocalUpload(relativePath: string): Promise<void> {
   const res = await fetch(`/api/uploads?path=${encodeURIComponent(relativePath)}`, {
     method: "DELETE",

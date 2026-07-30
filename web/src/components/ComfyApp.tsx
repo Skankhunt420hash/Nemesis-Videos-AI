@@ -6,6 +6,7 @@ import type { GenerationJob } from "@/lib/ai/types";
 import {
   deleteLocalUpload,
   exportAssets3dCollectionApi,
+  exportAssets3dCollectionZipUrl,
   fetchAppStatusApi,
   fetchHistory,
   fetchQueue,
@@ -843,6 +844,15 @@ export function ComfyApp() {
     [],
   );
 
+  const exportCollectionZip = useCallback((collectionName: string) => {
+    const url = exportAssets3dCollectionZipUrl(collectionName);
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noreferrer";
+    a.click();
+  }, []);
+
   const addTraitRow = useCallback(() => {
     setAsset3dDraft((prev) => ({
       ...prev,
@@ -1498,13 +1508,22 @@ export function ComfyApp() {
                           <p className="text-[11px] uppercase tracking-wide text-zinc-500">
                             {group.name} · {group.items.length}
                           </p>
-                          <button
-                            type="button"
-                            onClick={() => void exportCollectionMetadata(group.name)}
-                            className="rounded border border-fuchsia-700 bg-fuchsia-950/30 px-2 py-1 text-[11px] text-fuchsia-200"
-                          >
-                            Collection JSON
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void exportCollectionMetadata(group.name)}
+                              className="rounded border border-fuchsia-700 bg-fuchsia-950/30 px-2 py-1 text-[11px] text-fuchsia-200"
+                            >
+                              Collection JSON
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => exportCollectionZip(group.name)}
+                              className="rounded border border-pink-700 bg-pink-950/30 px-2 py-1 text-[11px] text-pink-200"
+                            >
+                              ZIP
+                            </button>
+                          </div>
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                           {group.items.map((asset) => (
@@ -1616,7 +1635,18 @@ export function ComfyApp() {
                               }
                               className="text-pink-400"
                             >
-                              Ganze Collection exportieren
+                              Ganze Collection JSON
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                exportCollectionZip(
+                                  selected3dAsset.metadata.collection?.trim() || "Ohne Collection",
+                                )
+                              }
+                              className="text-rose-400"
+                            >
+                              Ganze Collection ZIP
                             </button>
                           </div>
                         </div>

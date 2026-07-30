@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
+import { ZipFile } from "yazl";
 
 export const runtime = "nodejs";
 
@@ -54,35 +55,7 @@ async function writeMetadata(data: Record<string, Asset3DMetadata>): Promise<voi
   await writeFile(META_FILE, JSON.stringify(data, null, 2));
 }
 
-function buildNftMetadataEntry(
-  relativePath: string,
-  url: string,
-  extension: string,
-  metadata: Asset3DMetadata,
-) {
-  const base = path.basename(relativePath, path.extname(relativePath));
-  return {
-    file: relativePath,
-    name: metadata.title || base,
-    description: metadata.notes || "",
-    image: metadata.coverImagePath
-      ? `/api/uploads/file/${metadata.coverImagePath.split("/").map(encodeURIComponent).join("/")}`
-      : undefined,
-    animation_url: url,
-    attributes: metadata.traits || [],
-    properties: {
-      category: "model",
-      files: [{ uri: url, type: `model/${extension}` }],
-      collection: metadata.collection || "",
-      version_group: metadata.versionGroup || "",
-      version_label: metadata.versionLabel || "",
-      tags: metadata.tags || [],
-    },
-  };
-}
-
-export async function GET(req: NextRequest): Promise<NextResponse> {
-  const metadata = await readMetadata();
+async function collectAssets(metadata: Record<string, Asset3DMetadata>) {
   const assets: Array<{
     relativePath: string;
     url: string;
@@ -141,8 +114,42 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   assets.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return assets;
+}
+
+function buildNftMetadataEntry(
+  relativePath: string,
+  url: string,
+  extension: string,
+  metadata: Asset3DMetadata,
+) {
+  const base = path.basename(relativePath, path.extname(relativePath));
+  return {
+    file: relativePath,
+    name: metadata.title || base,
+    description: metadata.notes || "",
+    image: metadata.coverImagePath
+      ? `/api/uploads/file/${metadata.coverImagePath.split("/").map(encodeURIComponent).join("/")}`
+      : undefined,
+    animation_url: url,
+    attributes: metadata.traits || [],
+    properties: {
+      category: "model",
+      files: [{ uri: url, type: `model/${extension}` }],
+      collection: metadata.collection || "",
+      version_group: metadata.versionGroup || "",
+      version_label: metadata.versionLabel || "",
+      tags: metadata.tags || [],
+    },
+  };
+}
+
+export async function GET(req: NextRequest): Promise<NextResponse> {
+  const metadata = await readMetadata();
+  const assets = await collectAssets(metadata);
 
   const exportCollection = req.nextUrl.searchParams.get("exportCollection")?.trim();
+  const exportZip = req.nextUrl.searchParams.get("exportZip")?.trim();
   if (exportCollection) {
     const collectionAssets = assets
       .filter((asset) => (asset.metadata.collection?.trim() || "Ohne Collection") === exportCollection)
@@ -158,6 +165,60 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         metadata: asset.metadata,
         nft: buildNftMetadataEntry(asset.relativePath, asset.url, asset.extension, asset.metadata),
       })),
+    });
+  }
+
+  if (exportZip) {
+    const collectionAssets = assets
+      .filter((asset) => (asset.metadata.collection?.trim() || "Ohne Collection") === exportZip)
+      .sort((a, b) => (a.metadata.sortOrder ?? 0) - (b.metadata.sortOrder ?? 0));
+
+    const zip = new ZipFile();
+    const safeCollection = exportZip.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "collection";
+    const manifest = {
+      collection: exportZip,
+      exportedAt: new Date().toISOString(),
+      total: collectionAssets.length,
+      items: collectionAssets.map((asset, index) => ({
+        index,
+        relativePath: asset.relativePath,
+        metadata: asset.metadata,
+        nft: buildNftMetadataEntry(asset.relativePath, asset.url, asset.extension, asset.metadata),
+      })),
+    };
+    zip.addBuffer(Buffer.from(JSON.stringify(manifest, null, 2)), `${safeCollection}/collection.json`);
+
+    const addedCovers = new Set<string>();
+    for (const asset of collectionAssets) {
+      const srcPath = path.join(UPLOAD_ROOT, asset.relativePath);
+      zip.addFile(srcPath, `${safeCollection}/assets/${path.basename(asset.relativePath)}`);
+      zip.addBuffer(
+        Buffer.from(
+          JSON.stringify(buildNftMetadataEntry(asset.relativePath, asset.url, asset.extension, asset.metadata), null, 2),
+        ),
+        `${safeCollection}/metadata/${path.basename(asset.relativePath, path.extname(asset.relativePath))}.json`,
+      );
+      const cover = asset.metadata.coverImagePath?.trim();
+      if (cover && !addedCovers.has(cover)) {
+        const coverPath = path.join(UPLOAD_ROOT, cover);
+        zip.addFile(coverPath, `${safeCollection}/covers/${path.basename(cover)}`);
+        addedCovers.add(cover);
+      }
+    }
+
+    zip.end();
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      zip.outputStream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      zip.outputStream.on("end", () => resolve());
+      zip.outputStream.on("error", reject);
+    });
+
+    return new NextResponse(Buffer.concat(chunks), {
+      headers: {
+        "content-type": "application/zip",
+        "content-disposition": `attachment; filename="${safeCollection}.zip"`,
+      },
     });
   }
 
