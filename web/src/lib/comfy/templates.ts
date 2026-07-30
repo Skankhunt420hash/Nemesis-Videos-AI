@@ -1,7 +1,10 @@
 import type { PhotoToolKind } from "@/lib/comfy/api";
 import type { ComfyWorkflow } from "./types";
 
-export function makeWorkflowTemplate(mode: "t2v" | "i2v" | "i2i" | "upscale", photoTool?: PhotoToolKind): ComfyWorkflow {
+export function makeWorkflowTemplate(
+  mode: "t2v" | "i2v" | "i2i" | "upscale" | "i23d" | "face-swap",
+  photoTool?: PhotoToolKind,
+): ComfyWorkflow {
   if (mode === "upscale") {
     return {
       "1": { class_type: "LoadImage", inputs: { image: "" } },
@@ -55,11 +58,33 @@ export function makeWorkflowTemplate(mode: "t2v" | "i2v" | "i2i" | "upscale", ph
     };
   }
 
+  if (mode === "i23d") {
+    return {
+      "1": { class_type: "LoadImage", inputs: { image: "" } },
+      "2": {
+        class_type: "TripoSRSampler",
+        inputs: { image: ["1", 0], prompt: "3d collectible, clean topology, studio lighting" },
+      },
+      "3": { class_type: "SaveGLB", inputs: { mesh: ["2", 0], filename_prefix: "nemesis_i23d" } },
+    };
+  }
+
+  if (mode === "face-swap") {
+    return {
+      "1": { class_type: "LoadImage", inputs: { image: "target.png" } },
+      "2": { class_type: "LoadImage", inputs: { image: "source_face.png" } },
+      "3": {
+        class_type: "ReActorFaceSwap",
+        inputs: { input_image: ["1", 0], source_image: ["2", 0], face_restore_model: "GFPGANv1.4.pth" },
+      },
+      "4": { class_type: "SaveImage", inputs: { images: ["3", 0], filename_prefix: "nemesis_face_swap" } },
+    };
+  }
+
   return {
     "1": { class_type: "CLIPTextEncode", inputs: { text: "cinematic video", clip: ["0", 1] } },
     "2": { class_type: "KSampler", inputs: { positive: ["1", 0], steps: 24, cfg: 7 } },
     "3": { class_type: "SaveVideo", inputs: { images: ["2", 0], filename_prefix: "nemesis_t2v" } },
   };
 }
-
 

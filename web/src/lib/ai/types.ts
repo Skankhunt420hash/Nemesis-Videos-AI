@@ -1,4 +1,4 @@
-export type GenerationMode = "t2v" | "i2v" | "i2i" | "upscale";
+export type GenerationMode = "t2v" | "i2v" | "i2i" | "upscale" | "i23d" | "face-swap";
 export type BackendMode = "local" | "cloud" | "hybrid";
 export type JobStatus = "queued" | "running" | "completed" | "failed";
 export type PhotoToolKind =
@@ -28,6 +28,7 @@ export interface GenerationRequest {
   height?: number;
   fps?: number;
   imageInputPath?: string;
+  secondImageInputPath?: string;
   styleFilter?: string;
   backendMode?: BackendMode;
   photoTool?: PhotoToolKind;

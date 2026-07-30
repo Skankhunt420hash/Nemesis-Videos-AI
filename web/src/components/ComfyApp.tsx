@@ -121,6 +121,7 @@ export function ComfyApp() {
   const [genSubmitBusy, setGenSubmitBusy] = useState(false);
   const [genBackend, setGenBackend] = useState<"local" | "cloud" | "hybrid">("local");
   const [genImagePath, setGenImagePath] = useState("");
+  const [genSecondImagePath, setGenSecondImagePath] = useState("");
   const [motionEnabled, setMotionEnabled] = useState(true);
   const [motionStrength, setMotionStrength] = useState(0.5);
   const [motionCameraPath, setMotionCameraPath] = useState("");
@@ -433,6 +434,7 @@ export function ComfyApp() {
       height: genHeight,
       fps: genFps,
       imageInputPath: genImagePath || undefined,
+      secondImageInputPath: genSecondImagePath || undefined,
       backendMode: genBackend,
       styleFilter: genMode === "i2i" ? photoTool : "auto",
       photoTool: pt,
@@ -449,6 +451,7 @@ export function ComfyApp() {
     genDuration,
     genFps,
     genHeight,
+    genSecondImagePath,
     genWidth,
     genImagePath,
     genMode,
@@ -632,6 +635,8 @@ export function ComfyApp() {
             ["i2v", "Bild→Video"],
             ["i2i", "KI-Foto"],
             ["upscale", "Upscale"],
+            ["face-swap", "Face Swap"],
+            ["i23d", "Image→3D"],
           ].map(([mode, label]) => (
             <button
               key={mode}
@@ -724,6 +729,8 @@ export function ComfyApp() {
                 <option value="i2v">Image to Video</option>
                 <option value="i2i">KI Foto</option>
                 <option value="upscale">Upscaler</option>
+                <option value="face-swap">Face Swap</option>
+                <option value="i23d">Image to 3D</option>
               </select>
               <select
                 value={genBackend}
@@ -753,7 +760,7 @@ export function ComfyApp() {
             <textarea
               value={genPrompt}
               onChange={(e) => setGenPrompt(e.target.value)}
-              placeholder="Prompt..."
+              placeholder={genMode === "face-swap" ? "Optionaler Prompt / Notizen..." : genMode === "i23d" ? "Optional: 3D Stil / Material / Look..." : "Prompt..."}
               className="mt-2 min-h-20 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200"
             />
             <input
@@ -775,10 +782,23 @@ export function ComfyApp() {
               <input
                 value={genImagePath}
                 onChange={(e) => setGenImagePath(e.target.value)}
-                placeholder="Bildpfad (Uploads / Comfy)"
+                placeholder={genMode === "face-swap" ? "Zielbild-Pfad (Uploads / Comfy)" : "Bildpfad (Uploads / Comfy)"}
                 className="rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200"
               />
             </div>
+            {genMode === "face-swap" ? (
+              <input
+                value={genSecondImagePath}
+                onChange={(e) => setGenSecondImagePath(e.target.value)}
+                placeholder="Quellgesicht-Pfad (Uploads / Comfy)"
+                className="mt-2 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200"
+              />
+            ) : null}
+            {(genMode === "face-swap" || genMode === "i23d") ? (
+              <p className="mt-2 text-[11px] text-zinc-500">
+                Keine zusätzliche App-seitige Prompt-Zensur. Grenzen kommen nur von deinem Backend / den installierten Comfy-Nodes.
+              </p>
+            ) : null}
             <div className="mt-2 grid gap-2 sm:grid-cols-3">
               <input
                 type="number"

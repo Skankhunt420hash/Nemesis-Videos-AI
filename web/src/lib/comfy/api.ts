@@ -153,7 +153,7 @@ export async function renameLocalUpload(oldPath: string, newPath: string): Promi
   return data.relativePath;
 }
 
-export type GenMode = "t2v" | "i2v" | "i2i" | "upscale";
+export type GenMode = "t2v" | "i2v" | "i2i" | "upscale" | "i23d" | "face-swap";
 export type BackendMode = "local" | "cloud" | "hybrid";
 
 export type PhotoToolKind =
@@ -173,6 +173,7 @@ export interface GenerationSubmitPayload {
   height?: number;
   fps?: number;
   imageInputPath?: string;
+  secondImageInputPath?: string;
   styleFilter?: string;
   backendMode: BackendMode;
   photoTool?: PhotoToolKind;

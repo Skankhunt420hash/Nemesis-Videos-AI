@@ -55,6 +55,24 @@ function buildWorkflow(
   );
   const rembg = chooseNode(available, ["RembgNode", "BRIA_RMBG"], "ImageScaleBy", nodeFallbacks);
   const faceDetail = chooseNode(available, ["FaceDetailer"], "KSampler", nodeFallbacks);
+  const faceSwap = chooseNode(
+    available,
+    ["ReActorFaceSwap", "ReActorFaceSwapOpt", "FaceSwap"],
+    "ReActorFaceSwap",
+    nodeFallbacks,
+  );
+  const imageTo3d = chooseNode(
+    available,
+    ["TripoSRSampler", "TripoSR", "Hunyuan3DNode", "CRM"],
+    "TripoSRSampler",
+    nodeFallbacks,
+  );
+  const saveMesh = chooseNode(
+    available,
+    ["SaveGLB", "Save3D", "Preview3D"],
+    "SaveGLB",
+    nodeFallbacks,
+  );
 
   const prompt = request.prompt || "";
   const pt = request.photoTool;
@@ -119,6 +137,52 @@ function buildWorkflow(
         "3": {
           class_type: saveVideo,
           inputs: { images: ["2", 0], filename_prefix: "nemesis_i2v" },
+        },
+      },
+    };
+  }
+
+  if (request.mode === "face-swap") {
+    return {
+      workflowName: "face-swap",
+      workflow: {
+        "1": { class_type: loadImage, inputs: { image: request.imageInputPath || "" } },
+        "2": { class_type: loadImage, inputs: { image: request.secondImageInputPath || "" } },
+        "3": {
+          class_type: faceSwap,
+          inputs: {
+            input_image: ["1", 0],
+            target_image: ["1", 0],
+            source_image: ["2", 0],
+            source_faces_index: "0",
+            input_faces_index: "0",
+            console_log_level: 1,
+          },
+        },
+        "4": {
+          class_type: saveImage,
+          inputs: { images: ["3", 0], filename_prefix: "nemesis_face_swap" },
+        },
+      },
+    };
+  }
+
+  if (request.mode === "i23d") {
+    return {
+      workflowName: "image-to-3d",
+      workflow: {
+        "1": { class_type: loadImage, inputs: { image: request.imageInputPath || "" } },
+        "2": {
+          class_type: imageTo3d,
+          inputs: {
+            image: ["1", 0],
+            prompt: prompt || "3d collectible, clean mesh, detailed texture",
+            texture_prompt: prompt || "3d collectible, clean mesh, detailed texture",
+          },
+        },
+        "3": {
+          class_type: saveMesh,
+          inputs: { mesh: ["2", 0], filename_prefix: "nemesis_i23d" },
         },
       },
     };

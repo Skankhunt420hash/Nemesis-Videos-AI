@@ -13,6 +13,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (
       !normalized.prompt &&
+      normalized.mode !== "i23d" &&
+      normalized.mode !== "face-swap" &&
       normalized.mode !== "upscale" &&
       normalized.photoTool !== "background-remove"
     ) {
@@ -21,6 +23,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const needsImage =
       normalized.mode === "i2v" ||
+      normalized.mode === "i23d" ||
+      normalized.mode === "face-swap" ||
       normalized.mode === "upscale" ||
       normalized.photoTool === "enhance" ||
       normalized.photoTool === "background-remove" ||
@@ -33,6 +37,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (needsImage && !normalized.imageInputPath) {
       return NextResponse.json(
         { error: "imageInputPath ist für diesen Modus erforderlich." },
+        { status: 400 },
+      );
+    }
+
+    if (normalized.mode === "face-swap" && !normalized.secondImageInputPath) {
+      return NextResponse.json(
+        { error: "secondImageInputPath ist für Face Swap erforderlich." },
         { status: 400 },
       );
     }

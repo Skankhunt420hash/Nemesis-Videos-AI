@@ -7,7 +7,7 @@ export function normalizeGenerationRequest(input: GenerationRequest): Generation
   const height = Math.max(256, Math.min(1280, Math.round(input.height || 480)));
   const mode = input.mode;
 
-  const durationSec = mode === "upscale" ? 1 : duration;
+  const durationSec = mode === "upscale" || mode === "i23d" || mode === "face-swap" ? 1 : duration;
 
   return {
     ...input,
@@ -21,6 +21,7 @@ export function normalizeGenerationRequest(input: GenerationRequest): Generation
     photoTool: input.photoTool,
     styleFilter: input.styleFilter,
     imageInputPath: input.imageInputPath,
+    secondImageInputPath: input.secondImageInputPath,
     mode: input.mode,
     motion: {
       enabled: Boolean(input.motion?.enabled),
