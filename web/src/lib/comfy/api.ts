@@ -47,6 +47,7 @@ export interface AppStatusResponse {
   comfy: { ok: boolean; url: string; httpStatus?: number; error?: string };
   cloudConfigured: boolean;
   hints: string[];
+  modeSupport?: Array<{ mode: string; ok: boolean; missing: string[] }>;
 }
 
 export async function fetchAppStatusApi(): Promise<AppStatusResponse> {

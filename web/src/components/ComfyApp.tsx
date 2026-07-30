@@ -609,6 +609,32 @@ export function ComfyApp() {
         </div>
       ) : null}
 
+      {appStatus?.modeSupport?.length ? (
+        <section className="rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-medium text-zinc-300">Node-Check</h2>
+            <span className="text-zinc-500">Comfy-Kompatibilität pro Modus</span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {appStatus.modeSupport.map((item) => (
+              <div key={item.mode} className="rounded border border-zinc-800 bg-zinc-900 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-zinc-200">{item.mode}</span>
+                  <span className={item.ok ? "text-emerald-400" : "text-amber-400"}>
+                    {item.ok ? "bereit" : "fehlt"}
+                  </span>
+                </div>
+                {!item.ok ? (
+                  <p className="mt-1 whitespace-pre-wrap text-[11px] text-zinc-500">
+                    {item.missing.join("\n")}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <nav className="sticky top-0 z-10 flex flex-wrap gap-2 border-y border-zinc-800 bg-zinc-950/95 py-2 text-xs backdrop-blur">
         <a href="#models" className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1">
           Modelle
