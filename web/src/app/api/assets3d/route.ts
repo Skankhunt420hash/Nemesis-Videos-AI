@@ -12,7 +12,10 @@ const THREE_D_EXT = /\.(glb|gltf|obj|ply|stl|fbx|usdz)$/i;
 interface Asset3DMetadata {
   title?: string;
   collection?: string;
+  collectionOrder?: number;
+  sortOrder?: number;
   tags?: string[];
+  traits?: Array<{ trait_type: string; value: string; display_type?: string }>;
   notes?: string;
   polishPrompt?: string;
   stage?: "draft" | "polish" | "final";

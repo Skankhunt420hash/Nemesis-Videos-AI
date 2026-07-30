@@ -115,6 +115,16 @@ function metadataToTagString(metadata?: Asset3DMetadata): string {
   return metadata?.tags?.join(", ") || "";
 }
 
+function downloadJsonFile(filename: string, data: unknown): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function ComfyApp() {
   const clientId = useMemo(() => crypto.randomUUID(), []);
   const { connected, log, clearLog } = useComfySocket(clientId);
@@ -183,12 +193,17 @@ export function ComfyApp() {
   const [selected3dPath, setSelected3dPath] = useState("");
   const [asset3dDraft, setAsset3dDraft] = useState<Asset3DMetadata>({
     stage: "draft",
+    collectionOrder: 0,
+    sortOrder: 0,
+    traits: [],
     scale: 1,
     rotationY: 0,
     exposure: 1,
   });
   const [asset3dTags, setAsset3dTags] = useState("");
   const [asset3dSaving, setAsset3dSaving] = useState(false);
+  const [dragCollectionName, setDragCollectionName] = useState("");
+  const [dragAssetPath, setDragAssetPath] = useState("");
 
   const folderInputAttrs = useMemo(
     () => ({ webkitdirectory: "", directory: "" }) as Record<string, string>,
@@ -230,6 +245,9 @@ export function ComfyApp() {
     setSelected3dPath(asset.relativePath);
     setAsset3dDraft({
       stage: asset.metadata.stage || "draft",
+      collectionOrder: asset.metadata.collectionOrder ?? 0,
+      sortOrder: asset.metadata.sortOrder ?? 0,
+      traits: asset.metadata.traits || [],
       coverImagePath: asset.metadata.coverImagePath || "",
       versionGroup: asset.metadata.versionGroup || "",
       versionLabel: asset.metadata.versionLabel || "",
@@ -277,14 +295,22 @@ export function ComfyApp() {
       list.push(asset);
       grouped.set(key, list);
     }
-    return Array.from(grouped.entries()).map(([name, items]) => ({ name, items }));
+    return Array.from(grouped.entries())
+      .map(([name, items]) => ({
+        name,
+        items: [...items].sort((a, b) => (a.metadata.sortOrder ?? 0) - (b.metadata.sortOrder ?? 0)),
+        order: Math.min(...items.map((item) => item.metadata.collectionOrder ?? 0)),
+      }))
+      .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
   }, [assets3d]);
 
   const relatedVersions = useMemo(() => {
     if (!selected3dAsset) return [] as Asset3DItem[];
     const group = selected3dAsset.metadata.versionGroup?.trim();
     if (!group) return [selected3dAsset];
-    return assets3d.filter((asset) => (asset.metadata.versionGroup?.trim() || "") === group);
+    return assets3d
+      .filter((asset) => (asset.metadata.versionGroup?.trim() || "") === group)
+      .sort((a, b) => (a.metadata.sortOrder ?? 0) - (b.metadata.sortOrder ?? 0));
   }, [assets3d, selected3dAsset]);
 
   useEffect(() => {
@@ -694,6 +720,9 @@ export function ComfyApp() {
           .split(",")
           .map((tag) => tag.trim())
           .filter(Boolean),
+        traits: (asset3dDraft.traits || []).filter(
+          (trait) => trait.trait_type.trim() || trait.value.trim() || (trait.display_type || "").trim(),
+        ),
       });
       await refreshAssets3d();
     } catch (e) {
@@ -702,6 +731,109 @@ export function ComfyApp() {
       setAsset3dSaving(false);
     }
   }, [asset3dDraft, asset3dTags, refreshAssets3d, selected3dAsset]);
+
+  const saveAsset3dMetadata = useCallback(
+    async (relativePath: string, metadata: Asset3DMetadata) => {
+      await updateAsset3dApi(relativePath, metadata);
+    },
+    [],
+  );
+
+  const moveCollection = useCallback(
+    async (fromCollection: string, toCollection: string) => {
+      if (!fromCollection || !toCollection || fromCollection === toCollection) return;
+      try {
+        setError(null);
+        const names = assetCollections.map((group) => group.name);
+        const fromIndex = names.indexOf(fromCollection);
+        const toIndex = names.indexOf(toCollection);
+        if (fromIndex < 0 || toIndex < 0) return;
+        const next = [...names];
+        const [moved] = next.splice(fromIndex, 1);
+        next.splice(toIndex, 0, moved);
+        for (let i = 0; i < next.length; i += 1) {
+          const name = next[i];
+          const group = assetCollections.find((entry) => entry.name === name);
+          if (!group) continue;
+          await Promise.all(
+            group.items.map((asset) => saveAsset3dMetadata(asset.relativePath, { collectionOrder: i })),
+          );
+        }
+        await refreshAssets3d();
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [assetCollections, refreshAssets3d, saveAsset3dMetadata],
+  );
+
+  const moveAssetInCollection = useCallback(
+    async (fromPath: string, toPath: string) => {
+      if (!fromPath || !toPath || fromPath === toPath) return;
+      const source = assets3d.find((asset) => asset.relativePath === fromPath);
+      const target = assets3d.find((asset) => asset.relativePath === toPath);
+      if (!source || !target) return;
+      const sourceCollection = source.metadata.collection?.trim() || "Ohne Collection";
+      const targetCollection = target.metadata.collection?.trim() || "Ohne Collection";
+      if (sourceCollection !== targetCollection) return;
+      try {
+        setError(null);
+        const items = assets3d
+          .filter((asset) => (asset.metadata.collection?.trim() || "Ohne Collection") === sourceCollection)
+          .sort((a, b) => (a.metadata.sortOrder ?? 0) - (b.metadata.sortOrder ?? 0));
+        const fromIndex = items.findIndex((asset) => asset.relativePath === fromPath);
+        const toIndex = items.findIndex((asset) => asset.relativePath === toPath);
+        if (fromIndex < 0 || toIndex < 0) return;
+        const next = [...items];
+        const [moved] = next.splice(fromIndex, 1);
+        next.splice(toIndex, 0, moved);
+        await Promise.all(
+          next.map((asset, index) => saveAsset3dMetadata(asset.relativePath, { sortOrder: index })),
+        );
+        await refreshAssets3d();
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [assets3d, refreshAssets3d, saveAsset3dMetadata],
+  );
+
+  const exportSelected3dMetadata = useCallback(() => {
+    if (!selected3dAsset) return;
+    const base = getOutputFilename(selected3dAsset.relativePath).replace(/\.[^.]+$/, "");
+    downloadJsonFile(`${base}.metadata.json`, {
+      name: asset3dDraft.title || base,
+      description: asset3dDraft.notes || "",
+      image: asset3dDraft.coverImagePath ? fileUrlFromRelativePath(asset3dDraft.coverImagePath) : undefined,
+      animation_url: selected3dAsset.url,
+      attributes: (asset3dDraft.traits || []).filter(
+        (trait) => trait.trait_type.trim() || trait.value.trim() || (trait.display_type || "").trim(),
+      ),
+      properties: {
+        category: "model",
+        files: [
+          {
+            uri: selected3dAsset.url,
+            type: `model/${selected3dAsset.extension}`,
+          },
+        ],
+        collection: asset3dDraft.collection || "",
+        version_group: asset3dDraft.versionGroup || "",
+        version_label: asset3dDraft.versionLabel || "",
+        tags: asset3dTags
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      },
+    });
+  }, [asset3dDraft, asset3dTags, selected3dAsset]);
+
+  const addTraitRow = useCallback(() => {
+    setAsset3dDraft((prev) => ({
+      ...prev,
+      traits: [...(prev.traits || []), { trait_type: "", value: "", display_type: "" }],
+    }));
+  }, []);
 
   const useSelected3dAsImageTo3dSource = useCallback(() => {
     if (!selected3dAsset) return;
@@ -1318,7 +1450,7 @@ export function ComfyApp() {
               <div>
                 <p className="text-xs font-medium text-zinc-300">3D Gallery / Asset Library</p>
                 <p className="text-[11px] text-zinc-500">
-                  Sammlung, Preview und Feinschliff für deine 3D-Assets.
+                  Sammlung, Preview, NFT-Metadaten und Feinschliff für deine 3D-Assets.
                 </p>
               </div>
               <button
@@ -1335,11 +1467,18 @@ export function ComfyApp() {
                 <div className="rounded border border-zinc-800 bg-zinc-900 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs text-zinc-300">Collections / Grid</p>
-                    <p className="text-[11px] text-zinc-500">NFT-Übersicht nach Serien</p>
+                    <p className="text-[11px] text-zinc-500">NFT-Übersicht + Drag & Drop Sortierung</p>
                   </div>
                   <div className="mt-3 space-y-4">
                     {assetCollections.map((group) => (
-                      <div key={group.name}>
+                      <div
+                        key={group.name}
+                        draggable
+                        onDragStart={() => setDragCollectionName(group.name)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={() => void moveCollection(dragCollectionName, group.name)}
+                        className="rounded border border-zinc-800 bg-zinc-950/40 p-2"
+                      >
                         <p className="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">
                           {group.name} · {group.items.length}
                         </p>
@@ -1348,6 +1487,10 @@ export function ComfyApp() {
                             <button
                               key={asset.relativePath}
                               type="button"
+                              draggable
+                              onDragStart={() => setDragAssetPath(asset.relativePath)}
+                              onDragOver={(e) => e.preventDefault()}
+                              onDrop={() => void moveAssetInCollection(dragAssetPath, asset.relativePath)}
                               onClick={() => applySelected3dAsset(asset)}
                               className={`overflow-hidden rounded border text-left ${selected3dPath === asset.relativePath ? "border-violet-500 bg-violet-950/30" : "border-zinc-800 bg-zinc-950"}`}
                             >
@@ -1381,176 +1524,262 @@ export function ComfyApp() {
                 </div>
 
                 <div className="grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)]">
-                <div className="max-h-[560px] space-y-2 overflow-auto pr-1">
-                  {assets3d.map((asset) => (
-                    <button
-                      key={asset.relativePath}
-                      type="button"
-                      onClick={() => applySelected3dAsset(asset)}
-                      className={`w-full rounded border p-2 text-left ${selected3dPath === asset.relativePath ? "border-violet-500 bg-violet-950/30" : "border-zinc-800 bg-zinc-900"}`}
-                    >
-                      <p className="truncate text-xs text-zinc-200">
-                        {asset.metadata.title || getOutputFilename(asset.relativePath)}
-                      </p>
-                      <p className="truncate text-[11px] text-zinc-500">{asset.relativePath}</p>
-                      <div className="mt-1 flex items-center justify-between text-[11px]">
-                        <span className="text-zinc-500">.{asset.extension}</span>
-                        <span className="text-zinc-400">{asset.metadata.stage || "draft"}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
+                  <div className="max-h-[560px] space-y-2 overflow-auto pr-1">
+                    {assets3d.map((asset) => (
+                      <button
+                        key={asset.relativePath}
+                        type="button"
+                        draggable
+                        onDragStart={() => setDragAssetPath(asset.relativePath)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={() => void moveAssetInCollection(dragAssetPath, asset.relativePath)}
+                        onClick={() => applySelected3dAsset(asset)}
+                        className={`w-full rounded border p-2 text-left ${selected3dPath === asset.relativePath ? "border-violet-500 bg-violet-950/30" : "border-zinc-800 bg-zinc-900"}`}
+                      >
+                        <p className="truncate text-xs text-zinc-200">
+                          {asset.metadata.title || getOutputFilename(asset.relativePath)}
+                        </p>
+                        <p className="truncate text-[11px] text-zinc-500">{asset.relativePath}</p>
+                        <div className="mt-1 flex items-center justify-between text-[11px]">
+                          <span className="text-zinc-500">.{asset.extension}</span>
+                          <span className="text-zinc-400">{asset.metadata.versionLabel || asset.metadata.stage || "draft"}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
 
-                {selected3dAsset ? (
-                  <div className="space-y-3">
-                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
-                      <div className="rounded border border-zinc-800 bg-zinc-900 p-2">
-                        {asset3dDraft.coverImagePath ? (
-                          // eslint-disable-next-line @next/next/no-img-element -- local cover preview
-                          <img
-                            src={fileUrlFromRelativePath(asset3dDraft.coverImagePath)}
-                            alt=""
-                            className="mb-2 h-36 w-full rounded border border-zinc-800 object-cover"
-                          />
-                        ) : null}
-                        {selected3dAsset.previewable ? (
-                          <div ref={modelViewerRef} className="h-[360px] w-full" />
-                        ) : (
-                          <div className="flex h-[360px] items-center justify-center rounded bg-zinc-950 text-center text-xs text-zinc-500">
-                            Kein Live-Preview für .{selected3dAsset.extension}. Datei bleibt downloadbar.
+                  {selected3dAsset ? (
+                    <div className="space-y-3">
+                      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
+                        <div className="rounded border border-zinc-800 bg-zinc-900 p-2">
+                          {asset3dDraft.coverImagePath ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- local cover preview
+                            <img
+                              src={fileUrlFromRelativePath(asset3dDraft.coverImagePath)}
+                              alt=""
+                              className="mb-2 h-36 w-full rounded border border-zinc-800 object-cover"
+                            />
+                          ) : null}
+                          {selected3dAsset.previewable ? (
+                            <div ref={modelViewerRef} className="h-[360px] w-full" />
+                          ) : (
+                            <div className="flex h-[360px] items-center justify-center rounded bg-zinc-950 text-center text-xs text-zinc-500">
+                              Kein Live-Preview für .{selected3dAsset.extension}. Datei bleibt downloadbar.
+                            </div>
+                          )}
+                          <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                            <a href={selected3dAsset.url} target="_blank" rel="noreferrer" className="text-emerald-400">
+                              Datei öffnen / downloaden
+                            </a>
+                            <button type="button" onClick={useSelected3dAsImageTo3dSource} className="text-sky-400">
+                              Als Image→3D Quelle nutzen
+                            </button>
+                            <button type="button" onClick={copySelected3dPrompt} className="text-violet-400">
+                              Polish-Prompt → Generator
+                            </button>
+                            <button type="button" onClick={assignPreviewAsCover} className="text-amber-400">
+                              Preview als Cover
+                            </button>
+                            <button type="button" onClick={exportSelected3dMetadata} className="text-fuchsia-400">
+                              NFT JSON exportieren
+                            </button>
                           </div>
-                        )}
-                        <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
-                          <a href={selected3dAsset.url} target="_blank" rel="noreferrer" className="text-emerald-400">
-                            Datei öffnen / downloaden
-                          </a>
-                          <button type="button" onClick={useSelected3dAsImageTo3dSource} className="text-sky-400">
-                            Als Image→3D Quelle nutzen
-                          </button>
-                          <button type="button" onClick={copySelected3dPrompt} className="text-violet-400">
-                            Polish-Prompt → Generator
-                          </button>
-                          <button type="button" onClick={assignPreviewAsCover} className="text-amber-400">
-                            Preview als Cover
-                          </button>
                         </div>
-                      </div>
 
-                      <div className="space-y-2 rounded border border-zinc-800 bg-zinc-900 p-3">
-                        <input
-                          value={asset3dDraft.title || ""}
-                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, title: e.target.value }))}
-                          placeholder="Titel"
-                          className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
-                        />
-                        <input
-                          value={asset3dDraft.collection || ""}
-                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, collection: e.target.value }))}
-                          placeholder="Collection / Serie"
-                          className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
-                        />
-                        <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="space-y-2 rounded border border-zinc-800 bg-zinc-900 p-3">
                           <input
-                            value={asset3dDraft.versionGroup || ""}
-                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, versionGroup: e.target.value }))}
-                            placeholder="Version Group / Asset Family"
+                            value={asset3dDraft.title || ""}
+                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, title: e.target.value }))}
+                            placeholder="Titel"
                             className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
                           />
                           <input
-                            value={asset3dDraft.versionLabel || ""}
-                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, versionLabel: e.target.value }))}
-                            placeholder="Version Label (v1, v2, final)"
+                            value={asset3dDraft.collection || ""}
+                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, collection: e.target.value }))}
+                            placeholder="Collection / Serie"
                             className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
                           />
-                        </div>
-                        <input
-                          value={asset3dDraft.coverImagePath || ""}
-                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, coverImagePath: e.target.value }))}
-                          placeholder="Cover-Bild Pfad"
-                          className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
-                        />
-                        <input
-                          value={asset3dTags}
-                          onChange={(e) => setAsset3dTags(e.target.value)}
-                          placeholder="Tags, comma separated"
-                          className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
-                        />
-                        <select
-                          value={asset3dDraft.stage || "draft"}
-                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, stage: e.target.value as "draft" | "polish" | "final" }))}
-                          className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
-                        >
-                          <option value="draft">Draft</option>
-                          <option value="polish">Polish</option>
-                          <option value="final">Final</option>
-                        </select>
-                        <textarea
-                          value={asset3dDraft.polishPrompt || ""}
-                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, polishPrompt: e.target.value }))}
-                          placeholder="Polish-Prompt / Rework-Idee"
-                          className="min-h-20 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
-                        />
-                        <textarea
-                          value={asset3dDraft.notes || ""}
-                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, notes: e.target.value }))}
-                          placeholder="Notizen / Feinschliff"
-                          className="min-h-20 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
-                        />
-                        <div className="grid gap-2 sm:grid-cols-3">
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <input
+                              value={asset3dDraft.versionGroup || ""}
+                              onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, versionGroup: e.target.value }))}
+                              placeholder="Version Group / Asset Family"
+                              className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                            />
+                            <input
+                              value={asset3dDraft.versionLabel || ""}
+                              onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, versionLabel: e.target.value }))}
+                              placeholder="Version Label (v1, v2, final)"
+                              className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                            />
+                          </div>
                           <input
-                            type="number"
-                            step="0.1"
-                            value={asset3dDraft.scale ?? 1}
-                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, scale: Number(e.target.value) }))}
-                            placeholder="Scale"
-                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                            value={asset3dDraft.coverImagePath || ""}
+                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, coverImagePath: e.target.value }))}
+                            placeholder="Cover-Bild Pfad"
+                            className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
                           />
                           <input
-                            type="number"
-                            step="1"
-                            value={asset3dDraft.rotationY ?? 0}
-                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, rotationY: Number(e.target.value) }))}
-                            placeholder="Y Rotation"
-                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                            value={asset3dTags}
+                            onChange={(e) => setAsset3dTags(e.target.value)}
+                            placeholder="Tags, comma separated"
+                            className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
                           />
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={asset3dDraft.exposure ?? 1}
-                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, exposure: Number(e.target.value) }))}
-                            placeholder="Exposure"
-                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                          <select
+                            value={asset3dDraft.stage || "draft"}
+                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, stage: e.target.value as "draft" | "polish" | "final" }))}
+                            className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                          >
+                            <option value="draft">Draft</option>
+                            <option value="polish">Polish</option>
+                            <option value="final">Final</option>
+                          </select>
+                          <textarea
+                            value={asset3dDraft.polishPrompt || ""}
+                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, polishPrompt: e.target.value }))}
+                            placeholder="Polish-Prompt / Rework-Idee"
+                            className="min-h-20 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
                           />
-                        </div>
-                        <button
-                          type="button"
-                          disabled={asset3dSaving}
-                          onClick={() => void saveSelected3dAsset()}
-                          className="w-full rounded bg-emerald-500 px-3 py-2 text-xs font-medium text-zinc-950 disabled:opacity-50"
-                        >
-                          {asset3dSaving ? "Speichert…" : "Asset speichern"}
-                        </button>
+                          <textarea
+                            value={asset3dDraft.notes || ""}
+                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, notes: e.target.value }))}
+                            placeholder="Notizen / Feinschliff"
+                            className="min-h-20 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                          />
+                          <div className="grid gap-2 sm:grid-cols-3">
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={asset3dDraft.scale ?? 1}
+                              onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, scale: Number(e.target.value) }))}
+                              placeholder="Scale"
+                              className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                            />
+                            <input
+                              type="number"
+                              step="1"
+                              value={asset3dDraft.rotationY ?? 0}
+                              onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, rotationY: Number(e.target.value) }))}
+                              placeholder="Y Rotation"
+                              className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                            />
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={asset3dDraft.exposure ?? 1}
+                              onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, exposure: Number(e.target.value) }))}
+                              placeholder="Exposure"
+                              className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                            />
+                          </div>
 
-                        <div className="rounded border border-zinc-800 bg-zinc-950 p-2">
-                          <p className="text-[11px] text-zinc-500">Versionen</p>
-                          <div className="mt-2 space-y-1">
-                            {relatedVersions.map((asset) => (
-                              <button
-                                key={asset.relativePath}
-                                type="button"
-                                onClick={() => applySelected3dAsset(asset)}
-                                className={`flex w-full items-center justify-between rounded border px-2 py-1 text-left text-[11px] ${asset.relativePath === selected3dPath ? "border-violet-500 bg-violet-950/30 text-zinc-100" : "border-zinc-800 bg-zinc-900 text-zinc-400"}`}
-                              >
-                                <span className="truncate">{asset.metadata.versionLabel || getOutputFilename(asset.relativePath)}</span>
-                                <span>{asset.metadata.stage || "draft"}</span>
+                          <div className="rounded border border-zinc-800 bg-zinc-950 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-[11px] text-zinc-500">Traits / Attributes</p>
+                              <button type="button" onClick={addTraitRow} className="text-[11px] text-emerald-400">
+                                + Trait
                               </button>
-                            ))}
+                            </div>
+                            <div className="mt-2 space-y-2">
+                              {(asset3dDraft.traits || []).map((trait, index) => (
+                                <div key={`${index}-${trait.trait_type}-${trait.value}`} className="grid gap-2 sm:grid-cols-[1fr_1fr_120px_32px]">
+                                  <input
+                                    value={trait.trait_type}
+                                    onChange={(e) =>
+                                      setAsset3dDraft((prev) => ({
+                                        ...prev,
+                                        traits: (prev.traits || []).map((item, i) =>
+                                          i === index ? { ...item, trait_type: e.target.value } : item,
+                                        ),
+                                      }))
+                                    }
+                                    placeholder="trait_type"
+                                    className="rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200"
+                                  />
+                                  <input
+                                    value={trait.value}
+                                    onChange={(e) =>
+                                      setAsset3dDraft((prev) => ({
+                                        ...prev,
+                                        traits: (prev.traits || []).map((item, i) =>
+                                          i === index ? { ...item, value: e.target.value } : item,
+                                        ),
+                                      }))
+                                    }
+                                    placeholder="value"
+                                    className="rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200"
+                                  />
+                                  <input
+                                    value={trait.display_type || ""}
+                                    onChange={(e) =>
+                                      setAsset3dDraft((prev) => ({
+                                        ...prev,
+                                        traits: (prev.traits || []).map((item, i) =>
+                                          i === index ? { ...item, display_type: e.target.value } : item,
+                                        ),
+                                      }))
+                                    }
+                                    placeholder="display"
+                                    className="rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setAsset3dDraft((prev) => ({
+                                        ...prev,
+                                        traits: (prev.traits || []).filter((_, i) => i !== index),
+                                      }))
+                                    }
+                                    className="rounded border border-red-900 bg-red-950/40 px-2 py-2 text-xs text-red-300"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                              {!(asset3dDraft.traits || []).length ? (
+                                <p className="text-[11px] text-zinc-600">Noch keine NFT-Attribute.</p>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <button
+                              type="button"
+                              disabled={asset3dSaving}
+                              onClick={() => void saveSelected3dAsset()}
+                              className="rounded bg-emerald-500 px-3 py-2 text-xs font-medium text-zinc-950 disabled:opacity-50"
+                            >
+                              {asset3dSaving ? "Speichert…" : "Asset speichern"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={exportSelected3dMetadata}
+                              className="rounded border border-fuchsia-700 bg-fuchsia-950/30 px-3 py-2 text-xs text-fuchsia-200"
+                            >
+                              NFT Metadata JSON
+                            </button>
+                          </div>
+
+                          <div className="rounded border border-zinc-800 bg-zinc-950 p-2">
+                            <p className="text-[11px] text-zinc-500">Versionen</p>
+                            <div className="mt-2 space-y-1">
+                              {relatedVersions.map((asset) => (
+                                <button
+                                  key={asset.relativePath}
+                                  type="button"
+                                  onClick={() => applySelected3dAsset(asset)}
+                                  className={`flex w-full items-center justify-between rounded border px-2 py-1 text-left text-[11px] ${asset.relativePath === selected3dPath ? "border-violet-500 bg-violet-950/30 text-zinc-100" : "border-zinc-800 bg-zinc-900 text-zinc-400"}`}
+                                >
+                                  <span className="truncate">{asset.metadata.versionLabel || getOutputFilename(asset.relativePath)}</span>
+                                  <span>{asset.metadata.stage || "draft"}</span>
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ) : null}
+                  ) : null}
                 </div>
               </div>
             ) : (

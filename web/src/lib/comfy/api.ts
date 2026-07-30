@@ -131,7 +131,10 @@ export interface UploadListItem {
 export interface Asset3DMetadata {
   title?: string;
   collection?: string;
+  collectionOrder?: number;
+  sortOrder?: number;
   tags?: string[];
+  traits?: Array<{ trait_type: string; value: string; display_type?: string }>;
   notes?: string;
   polishPrompt?: string;
   stage?: "draft" | "polish" | "final";
