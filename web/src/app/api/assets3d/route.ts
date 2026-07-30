@@ -54,7 +54,34 @@ async function writeMetadata(data: Record<string, Asset3DMetadata>): Promise<voi
   await writeFile(META_FILE, JSON.stringify(data, null, 2));
 }
 
-export async function GET(): Promise<NextResponse> {
+function buildNftMetadataEntry(
+  relativePath: string,
+  url: string,
+  extension: string,
+  metadata: Asset3DMetadata,
+) {
+  const base = path.basename(relativePath, path.extname(relativePath));
+  return {
+    file: relativePath,
+    name: metadata.title || base,
+    description: metadata.notes || "",
+    image: metadata.coverImagePath
+      ? `/api/uploads/file/${metadata.coverImagePath.split("/").map(encodeURIComponent).join("/")}`
+      : undefined,
+    animation_url: url,
+    attributes: metadata.traits || [],
+    properties: {
+      category: "model",
+      files: [{ uri: url, type: `model/${extension}` }],
+      collection: metadata.collection || "",
+      version_group: metadata.versionGroup || "",
+      version_label: metadata.versionLabel || "",
+      tags: metadata.tags || [],
+    },
+  };
+}
+
+export async function GET(req: NextRequest): Promise<NextResponse> {
   const metadata = await readMetadata();
   const assets: Array<{
     relativePath: string;
@@ -114,6 +141,26 @@ export async function GET(): Promise<NextResponse> {
   }
 
   assets.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+  const exportCollection = req.nextUrl.searchParams.get("exportCollection")?.trim();
+  if (exportCollection) {
+    const collectionAssets = assets
+      .filter((asset) => (asset.metadata.collection?.trim() || "Ohne Collection") === exportCollection)
+      .sort((a, b) => (a.metadata.sortOrder ?? 0) - (b.metadata.sortOrder ?? 0));
+
+    return NextResponse.json({
+      collection: exportCollection,
+      exportedAt: new Date().toISOString(),
+      total: collectionAssets.length,
+      items: collectionAssets.map((asset, index) => ({
+        index,
+        relativePath: asset.relativePath,
+        metadata: asset.metadata,
+        nft: buildNftMetadataEntry(asset.relativePath, asset.url, asset.extension, asset.metadata),
+      })),
+    });
+  }
+
   return NextResponse.json({ assets });
 }
 

@@ -186,6 +186,14 @@ export async function updateAsset3dApi(
   return data.metadata;
 }
 
+export async function exportAssets3dCollectionApi(collection: string): Promise<unknown> {
+  const res = await fetch(`/api/assets3d?exportCollection=${encodeURIComponent(collection)}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function deleteLocalUpload(relativePath: string): Promise<void> {
   const res = await fetch(`/api/uploads?path=${encodeURIComponent(relativePath)}`, {
     method: "DELETE",

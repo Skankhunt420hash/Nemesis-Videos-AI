@@ -5,6 +5,7 @@ import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { GenerationJob } from "@/lib/ai/types";
 import {
   deleteLocalUpload,
+  exportAssets3dCollectionApi,
   fetchAppStatusApi,
   fetchHistory,
   fetchQueue,
@@ -828,6 +829,20 @@ export function ComfyApp() {
     });
   }, [asset3dDraft, asset3dTags, selected3dAsset]);
 
+  const exportCollectionMetadata = useCallback(
+    async (collectionName: string) => {
+      try {
+        setError(null);
+        const data = await exportAssets3dCollectionApi(collectionName);
+        const safe = collectionName.toLowerCase().replace(/[^a-z0-9_-]+/gi, "-");
+        downloadJsonFile(`${safe || "collection"}.collection.json`, data);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [],
+  );
+
   const addTraitRow = useCallback(() => {
     setAsset3dDraft((prev) => ({
       ...prev,
@@ -1479,9 +1494,18 @@ export function ComfyApp() {
                         onDrop={() => void moveCollection(dragCollectionName, group.name)}
                         className="rounded border border-zinc-800 bg-zinc-950/40 p-2"
                       >
-                        <p className="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">
-                          {group.name} · {group.items.length}
-                        </p>
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                            {group.name} · {group.items.length}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => void exportCollectionMetadata(group.name)}
+                            className="rounded border border-fuchsia-700 bg-fuchsia-950/30 px-2 py-1 text-[11px] text-fuchsia-200"
+                          >
+                            Collection JSON
+                          </button>
+                        </div>
                         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                           {group.items.map((asset) => (
                             <button
@@ -1582,6 +1606,17 @@ export function ComfyApp() {
                             </button>
                             <button type="button" onClick={exportSelected3dMetadata} className="text-fuchsia-400">
                               NFT JSON exportieren
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void exportCollectionMetadata(
+                                  selected3dAsset.metadata.collection?.trim() || "Ohne Collection",
+                                )
+                              }
+                              className="text-pink-400"
+                            >
+                              Ganze Collection exportieren
                             </button>
                           </div>
                         </div>
