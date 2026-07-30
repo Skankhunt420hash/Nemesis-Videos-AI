@@ -80,6 +80,30 @@ function isVideoOutputUrl(url: string): boolean {
   }
 }
 
+function isImageOutputUrl(url: string): boolean {
+  try {
+    const filename = new URL(url, "http://x").searchParams.get("filename") ?? "";
+    return /\.(png|jpe?g|webp|gif|bmp)$/i.test(filename);
+  } catch {
+    return false;
+  }
+}
+
+function getOutputFilename(url: string): string {
+  try {
+    const parsed = new URL(url, "http://x");
+    const fromQuery = parsed.searchParams.get("filename");
+    if (fromQuery) return fromQuery.split("/").pop() || fromQuery;
+    return parsed.pathname.split("/").pop() || url;
+  } catch {
+    return url;
+  }
+}
+
+function is3dOutputUrl(url: string): boolean {
+  return /\.(glb|gltf|obj|ply|stl|fbx|usdz)$/i.test(getOutputFilename(url));
+}
+
 type SelectedUpload = { file: File; relativePath: string };
 
 export function ComfyApp() {
@@ -610,7 +634,7 @@ export function ComfyApp() {
       ) : null}
 
       {appStatus?.modeSupport?.length ? (
-        <section className="rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs">
+        <section id="node-check" className="scroll-mt-20 rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-sm font-medium text-zinc-300">Node-Check</h2>
             <span className="text-zinc-500">Comfy-Kompatibilität pro Modus</span>
@@ -636,6 +660,9 @@ export function ComfyApp() {
       ) : null}
 
       <nav className="sticky top-0 z-10 flex flex-wrap gap-2 border-y border-zinc-800 bg-zinc-950/95 py-2 text-xs backdrop-blur">
+        <a href="#node-check" className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1">
+          Node-Check
+        </a>
         <a href="#models" className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1">
           Modelle
         </a>
@@ -805,20 +832,40 @@ export function ComfyApp() {
                 placeholder="Dauer (s)"
                 className="rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200"
               />
-              <input
-                value={genImagePath}
-                onChange={(e) => setGenImagePath(e.target.value)}
-                placeholder={genMode === "face-swap" ? "Zielbild-Pfad (Uploads / Comfy)" : "Bildpfad (Uploads / Comfy)"}
-                className="rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200"
-              />
+              <div className="space-y-1">
+                <p className="text-[11px] text-zinc-500">
+                  {genMode === "face-swap" ? "Target / Zielbild" : "Bildpfad"}
+                </p>
+                <input
+                  value={genImagePath}
+                  onChange={(e) => setGenImagePath(e.target.value)}
+                  placeholder={genMode === "face-swap" ? "Zielbild-Pfad (Uploads / Comfy)" : "Bildpfad (Uploads / Comfy)"}
+                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200"
+                />
+              </div>
             </div>
             {genMode === "face-swap" ? (
-              <input
-                value={genSecondImagePath}
-                onChange={(e) => setGenSecondImagePath(e.target.value)}
-                placeholder="Quellgesicht-Pfad (Uploads / Comfy)"
-                className="mt-2 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200"
-              />
+              <div className="mt-2 rounded border border-zinc-800 bg-zinc-900/50 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] text-zinc-500">Source / Quellgesicht</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGenImagePath(genSecondImagePath);
+                      setGenSecondImagePath(genImagePath);
+                    }}
+                    className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300"
+                  >
+                    Target ↔ Source
+                  </button>
+                </div>
+                <input
+                  value={genSecondImagePath}
+                  onChange={(e) => setGenSecondImagePath(e.target.value)}
+                  placeholder="Quellgesicht-Pfad (Uploads / Comfy)"
+                  className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs text-zinc-200"
+                />
+              </div>
             ) : null}
             {(genMode === "face-swap" || genMode === "i23d") ? (
               <p className="mt-2 text-[11px] text-zinc-500">
@@ -945,21 +992,52 @@ export function ComfyApp() {
                   <div className="flex flex-wrap gap-2">
                     {genJob.outputPaths.map((url) =>
                       isVideoOutputUrl(url) ? (
-                        <video
-                          key={url}
-                          src={url}
-                          controls
-                          playsInline
-                          className="max-h-48 max-w-[min(100%,280px)] rounded border border-zinc-700"
-                        />
+                        <div key={url} className="rounded border border-zinc-800 bg-zinc-900 p-2">
+                          <video
+                            src={url}
+                            controls
+                            playsInline
+                            className="max-h-48 max-w-[min(100%,280px)] rounded border border-zinc-700"
+                          />
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 block text-[11px] text-emerald-400"
+                          >
+                            Download {getOutputFilename(url)}
+                          </a>
+                        </div>
+                      ) : isImageOutputUrl(url) ? (
+                        <div key={url} className="rounded border border-zinc-800 bg-zinc-900 p-2">
+                          {/* eslint-disable-next-line @next/next/no-img-element -- Comfy-Ausgabe */}
+                          <img
+                            src={url}
+                            alt=""
+                            className="max-h-48 max-w-[min(100%,280px)] rounded border border-zinc-700 object-contain"
+                          />
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 block text-[11px] text-emerald-400"
+                          >
+                            Download {getOutputFilename(url)}
+                          </a>
+                        </div>
                       ) : (
-                        // eslint-disable-next-line @next/next/no-img-element -- Comfy-Ausgabe
-                        <img
-                          key={url}
-                          src={url}
-                          alt=""
-                          className="max-h-48 max-w-[min(100%,280px)] rounded border border-zinc-700 object-contain"
-                        />
+                        <div key={url} className="min-w-[220px] rounded border border-zinc-800 bg-zinc-900 p-3">
+                          <p className="text-xs text-zinc-200">{is3dOutputUrl(url) ? "3D Export" : "Datei"}</p>
+                          <p className="mt-1 break-all text-[11px] text-zinc-500">{getOutputFilename(url)}</p>
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 block text-[11px] text-emerald-400"
+                          >
+                            {is3dOutputUrl(url) ? "3D-Datei öffnen / downloaden" : "Datei öffnen / downloaden"}
+                          </a>
+                        </div>
                       ),
                     )}
                   </div>
@@ -1228,6 +1306,27 @@ export function ComfyApp() {
                     }}
                   >
                     {f.relativePath}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-[11px] text-emerald-400 hover:text-emerald-300"
+                    onClick={() => setGenImagePath(f.relativePath)}
+                  >
+                    → Main
+                  </button>
+                  <button
+                    type="button"
+                    className="text-[11px] text-sky-400 hover:text-sky-300"
+                    onClick={() => setGenImagePath(f.relativePath)}
+                  >
+                    → Target
+                  </button>
+                  <button
+                    type="button"
+                    className="text-[11px] text-violet-400 hover:text-violet-300"
+                    onClick={() => setGenSecondImagePath(f.relativePath)}
+                  >
+                    → Source
                   </button>
                   <button
                     type="button"
