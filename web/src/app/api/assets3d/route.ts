@@ -16,6 +16,9 @@ interface Asset3DMetadata {
   notes?: string;
   polishPrompt?: string;
   stage?: "draft" | "polish" | "final";
+  coverImagePath?: string;
+  versionGroup?: string;
+  versionLabel?: string;
   scale?: number;
   rotationY?: number;
   exposure?: number;

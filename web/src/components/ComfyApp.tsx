@@ -230,6 +230,9 @@ export function ComfyApp() {
     setSelected3dPath(asset.relativePath);
     setAsset3dDraft({
       stage: asset.metadata.stage || "draft",
+      coverImagePath: asset.metadata.coverImagePath || "",
+      versionGroup: asset.metadata.versionGroup || "",
+      versionLabel: asset.metadata.versionLabel || "",
       scale: asset.metadata.scale ?? 1,
       rotationY: asset.metadata.rotationY ?? 0,
       exposure: asset.metadata.exposure ?? 1,
@@ -265,6 +268,24 @@ export function ComfyApp() {
     () => assets3d.find((asset) => asset.relativePath === selected3dPath) ?? null,
     [assets3d, selected3dPath],
   );
+
+  const assetCollections = useMemo(() => {
+    const grouped = new Map<string, Asset3DItem[]>();
+    for (const asset of assets3d) {
+      const key = asset.metadata.collection?.trim() || "Ohne Collection";
+      const list = grouped.get(key) || [];
+      list.push(asset);
+      grouped.set(key, list);
+    }
+    return Array.from(grouped.entries()).map(([name, items]) => ({ name, items }));
+  }, [assets3d]);
+
+  const relatedVersions = useMemo(() => {
+    if (!selected3dAsset) return [] as Asset3DItem[];
+    const group = selected3dAsset.metadata.versionGroup?.trim();
+    if (!group) return [selected3dAsset];
+    return assets3d.filter((asset) => (asset.metadata.versionGroup?.trim() || "") === group);
+  }, [assets3d, selected3dAsset]);
 
   useEffect(() => {
     const host = modelViewerRef.current;
@@ -694,6 +715,11 @@ export function ComfyApp() {
       setGenPrompt(asset3dDraft.polishPrompt.trim());
     }
   }, [asset3dDraft.polishPrompt]);
+
+  const assignPreviewAsCover = useCallback(() => {
+    if (!previewPath || detectPreviewKind(previewPath) !== "image") return;
+    setAsset3dDraft((prev) => ({ ...prev, coverImagePath: previewPath }));
+  }, [previewPath]);
 
   return (
     <div className="bg-grid mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 px-3 py-4 pb-24 text-zinc-100 sm:gap-6 sm:px-4 sm:py-8 sm:pb-8">
@@ -1305,7 +1331,56 @@ export function ComfyApp() {
             </div>
 
             {assets3d.length > 0 ? (
-              <div className="mt-3 grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)]">
+              <div className="mt-3 space-y-3">
+                <div className="rounded border border-zinc-800 bg-zinc-900 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-zinc-300">Collections / Grid</p>
+                    <p className="text-[11px] text-zinc-500">NFT-Übersicht nach Serien</p>
+                  </div>
+                  <div className="mt-3 space-y-4">
+                    {assetCollections.map((group) => (
+                      <div key={group.name}>
+                        <p className="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">
+                          {group.name} · {group.items.length}
+                        </p>
+                        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                          {group.items.map((asset) => (
+                            <button
+                              key={asset.relativePath}
+                              type="button"
+                              onClick={() => applySelected3dAsset(asset)}
+                              className={`overflow-hidden rounded border text-left ${selected3dPath === asset.relativePath ? "border-violet-500 bg-violet-950/30" : "border-zinc-800 bg-zinc-950"}`}
+                            >
+                              {asset.metadata.coverImagePath ? (
+                                // eslint-disable-next-line @next/next/no-img-element -- local cover thumbnail
+                                <img
+                                  src={fileUrlFromRelativePath(asset.metadata.coverImagePath)}
+                                  alt=""
+                                  className="h-32 w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-32 items-center justify-center bg-zinc-900 text-[11px] text-zinc-600">
+                                  no cover
+                                </div>
+                              )}
+                              <div className="p-2">
+                                <p className="truncate text-xs text-zinc-200">
+                                  {asset.metadata.title || getOutputFilename(asset.relativePath)}
+                                </p>
+                                <div className="mt-1 flex items-center justify-between text-[11px] text-zinc-500">
+                                  <span>{asset.metadata.versionLabel || asset.metadata.stage || "draft"}</span>
+                                  <span>.{asset.extension}</span>
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)]">
                 <div className="max-h-[560px] space-y-2 overflow-auto pr-1">
                   {assets3d.map((asset) => (
                     <button
@@ -1330,6 +1405,14 @@ export function ComfyApp() {
                   <div className="space-y-3">
                     <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
                       <div className="rounded border border-zinc-800 bg-zinc-900 p-2">
+                        {asset3dDraft.coverImagePath ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- local cover preview
+                          <img
+                            src={fileUrlFromRelativePath(asset3dDraft.coverImagePath)}
+                            alt=""
+                            className="mb-2 h-36 w-full rounded border border-zinc-800 object-cover"
+                          />
+                        ) : null}
                         {selected3dAsset.previewable ? (
                           <div ref={modelViewerRef} className="h-[360px] w-full" />
                         ) : (
@@ -1347,6 +1430,9 @@ export function ComfyApp() {
                           <button type="button" onClick={copySelected3dPrompt} className="text-violet-400">
                             Polish-Prompt → Generator
                           </button>
+                          <button type="button" onClick={assignPreviewAsCover} className="text-amber-400">
+                            Preview als Cover
+                          </button>
                         </div>
                       </div>
 
@@ -1361,6 +1447,26 @@ export function ComfyApp() {
                           value={asset3dDraft.collection || ""}
                           onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, collection: e.target.value }))}
                           placeholder="Collection / Serie"
+                          className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                        />
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <input
+                            value={asset3dDraft.versionGroup || ""}
+                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, versionGroup: e.target.value }))}
+                            placeholder="Version Group / Asset Family"
+                            className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                          />
+                          <input
+                            value={asset3dDraft.versionLabel || ""}
+                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, versionLabel: e.target.value }))}
+                            placeholder="Version Label (v1, v2, final)"
+                            className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                          />
+                        </div>
+                        <input
+                          value={asset3dDraft.coverImagePath || ""}
+                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, coverImagePath: e.target.value }))}
+                          placeholder="Cover-Bild Pfad"
                           className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
                         />
                         <input
@@ -1424,10 +1530,28 @@ export function ComfyApp() {
                         >
                           {asset3dSaving ? "Speichert…" : "Asset speichern"}
                         </button>
+
+                        <div className="rounded border border-zinc-800 bg-zinc-950 p-2">
+                          <p className="text-[11px] text-zinc-500">Versionen</p>
+                          <div className="mt-2 space-y-1">
+                            {relatedVersions.map((asset) => (
+                              <button
+                                key={asset.relativePath}
+                                type="button"
+                                onClick={() => applySelected3dAsset(asset)}
+                                className={`flex w-full items-center justify-between rounded border px-2 py-1 text-left text-[11px] ${asset.relativePath === selected3dPath ? "border-violet-500 bg-violet-950/30 text-zinc-100" : "border-zinc-800 bg-zinc-900 text-zinc-400"}`}
+                              >
+                                <span className="truncate">{asset.metadata.versionLabel || getOutputFilename(asset.relativePath)}</span>
+                                <span>{asset.metadata.stage || "draft"}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
                 ) : null}
+                </div>
               </div>
             ) : (
               <p className="mt-3 text-[11px] text-zinc-500">
@@ -1599,6 +1723,13 @@ export function ComfyApp() {
                     onClick={() => setGenSecondImagePath(f.relativePath)}
                   >
                     → Source
+                  </button>
+                  <button
+                    type="button"
+                    className="text-[11px] text-amber-400 hover:text-amber-300"
+                    onClick={() => setAsset3dDraft((prev) => ({ ...prev, coverImagePath: f.relativePath }))}
+                  >
+                    → Cover
                   </button>
                   <button
                     type="button"
