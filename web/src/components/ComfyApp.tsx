@@ -1,6 +1,7 @@
 "use client";
 
-import { type DragEvent, useCallback, useEffect, useMemo, useState } from "react";
+import Script from "next/script";
+import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GenerationJob } from "@/lib/ai/types";
 import {
   deleteLocalUpload,
@@ -11,6 +12,7 @@ import {
   getModelDownloadLogApi,
   getModelsStatusApi,
   interrupt,
+  listAssets3dApi,
   listBrainSuggestionsApi,
   listLocalUploads,
   queuePrompt,
@@ -20,9 +22,12 @@ import {
   startModelDownloadApi,
   submitGeneration,
   type AppStatusResponse,
+  type Asset3DItem,
+  type Asset3DMetadata,
   type GenMode,
   type PhotoToolKind,
   type UploadListItem,
+  updateAsset3dApi,
   uploadImageToComfyInput,
   uploadToLocalStorage,
 } from "@/lib/comfy/api";
@@ -106,9 +111,14 @@ function is3dOutputUrl(url: string): boolean {
 
 type SelectedUpload = { file: File; relativePath: string };
 
+function metadataToTagString(metadata?: Asset3DMetadata): string {
+  return metadata?.tags?.join(", ") || "";
+}
+
 export function ComfyApp() {
   const clientId = useMemo(() => crypto.randomUUID(), []);
   const { connected, log, clearLog } = useComfySocket(clientId);
+  const modelViewerRef = useRef<HTMLDivElement | null>(null);
 
   const [workflowText, setWorkflowText] = useState(EMPTY_WORKFLOW);
   const [busy, setBusy] = useState(false);
@@ -169,6 +179,16 @@ export function ComfyApp() {
   const [downloadStatus, setDownloadStatus] = useState<{ status?: string; model?: string; error?: string }>({});
   const [downloadLog, setDownloadLog] = useState("");
   const [appStatus, setAppStatus] = useState<AppStatusResponse | null>(null);
+  const [assets3d, setAssets3d] = useState<Asset3DItem[]>([]);
+  const [selected3dPath, setSelected3dPath] = useState("");
+  const [asset3dDraft, setAsset3dDraft] = useState<Asset3DMetadata>({
+    stage: "draft",
+    scale: 1,
+    rotationY: 0,
+    exposure: 1,
+  });
+  const [asset3dTags, setAsset3dTags] = useState("");
+  const [asset3dSaving, setAsset3dSaving] = useState(false);
 
   const folderInputAttrs = useMemo(
     () => ({ webkitdirectory: "", directory: "" }) as Record<string, string>,
@@ -204,6 +224,68 @@ export function ComfyApp() {
   useEffect(() => {
     queueMicrotask(() => void refreshStoredFiles());
   }, [refreshStoredFiles]);
+
+  const applySelected3dAsset = useCallback((asset: Asset3DItem | null) => {
+    if (!asset) return;
+    setSelected3dPath(asset.relativePath);
+    setAsset3dDraft({
+      stage: asset.metadata.stage || "draft",
+      scale: asset.metadata.scale ?? 1,
+      rotationY: asset.metadata.rotationY ?? 0,
+      exposure: asset.metadata.exposure ?? 1,
+      title: asset.metadata.title || "",
+      collection: asset.metadata.collection || "",
+      notes: asset.metadata.notes || "",
+      polishPrompt: asset.metadata.polishPrompt || "",
+      tags: asset.metadata.tags || [],
+      updatedAt: asset.metadata.updatedAt,
+    });
+    setAsset3dTags(metadataToTagString(asset.metadata));
+  }, []);
+
+  const refreshAssets3d = useCallback(async () => {
+    try {
+      const nextAssets = await listAssets3dApi();
+      setAssets3d(nextAssets);
+      const matched = nextAssets.find((asset) => asset.relativePath === selected3dPath);
+      if (matched) applySelected3dAsset(matched);
+      else if (nextAssets[0]) applySelected3dAsset(nextAssets[0]);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [applySelected3dAsset, selected3dPath]);
+
+  useEffect(() => {
+    queueMicrotask(() => void refreshAssets3d());
+    const t = setInterval(() => void refreshAssets3d(), 15000);
+    return () => clearInterval(t);
+  }, [refreshAssets3d]);
+
+  const selected3dAsset = useMemo(
+    () => assets3d.find((asset) => asset.relativePath === selected3dPath) ?? null,
+    [assets3d, selected3dPath],
+  );
+
+  useEffect(() => {
+    const host = modelViewerRef.current;
+    if (!host) return;
+    host.innerHTML = "";
+    if (!selected3dAsset?.previewable) return;
+    const el = document.createElement("model-viewer");
+    el.setAttribute("src", selected3dAsset.url);
+    el.setAttribute("camera-controls", "");
+    el.setAttribute("touch-action", "pan-y");
+    el.setAttribute("shadow-intensity", "1");
+    el.setAttribute("exposure", String(asset3dDraft.exposure ?? 1));
+    el.setAttribute("orientation", `0deg ${asset3dDraft.rotationY ?? 0}deg 0deg`);
+    const scale = asset3dDraft.scale ?? 1;
+    el.setAttribute("scale", `${scale} ${scale} ${scale}`);
+    el.setAttribute("style", "width:100%;height:100%;background:#09090b;border-radius:12px;");
+    host.appendChild(el);
+    return () => {
+      host.innerHTML = "";
+    };
+  }, [asset3dDraft.exposure, asset3dDraft.rotationY, asset3dDraft.scale, selected3dAsset]);
 
   const refreshBrainSuggestions = useCallback(async () => {
     try {
@@ -365,6 +447,7 @@ export function ComfyApp() {
         }
         setUploadInfo(lines.join("\n"));
         await refreshStoredFiles();
+        await refreshAssets3d();
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -373,7 +456,7 @@ export function ComfyApp() {
         setUploadCurrentFile("");
       }
     },
-    [uploads, refreshStoredFiles],
+    [uploads, refreshAssets3d, refreshStoredFiles],
   );
 
   const addTextAsFile = useCallback(() => {
@@ -579,8 +662,45 @@ export function ComfyApp() {
     }
   }, [refreshDownloadLog, refreshModels]);
 
+  const saveSelected3dAsset = useCallback(async () => {
+    if (!selected3dAsset) return;
+    setAsset3dSaving(true);
+    try {
+      setError(null);
+      await updateAsset3dApi(selected3dAsset.relativePath, {
+        ...asset3dDraft,
+        tags: asset3dTags
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      });
+      await refreshAssets3d();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setAsset3dSaving(false);
+    }
+  }, [asset3dDraft, asset3dTags, refreshAssets3d, selected3dAsset]);
+
+  const useSelected3dAsImageTo3dSource = useCallback(() => {
+    if (!selected3dAsset) return;
+    setGenMode("i23d");
+    setGenImagePath(selected3dAsset.relativePath);
+    if (asset3dDraft.polishPrompt?.trim()) setGenPrompt(asset3dDraft.polishPrompt.trim());
+  }, [asset3dDraft.polishPrompt, selected3dAsset]);
+
+  const copySelected3dPrompt = useCallback(() => {
+    if (asset3dDraft.polishPrompt?.trim()) {
+      setGenPrompt(asset3dDraft.polishPrompt.trim());
+    }
+  }, [asset3dDraft.polishPrompt]);
+
   return (
     <div className="bg-grid mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 px-3 py-4 pb-24 text-zinc-100 sm:gap-6 sm:px-4 sm:py-8 sm:pb-8">
+      <Script
+        type="module"
+        src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"
+      />
       <header className="border-b border-zinc-800 pb-6">
         <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
           Nemesis Videos AI · Studio
@@ -671,6 +791,9 @@ export function ComfyApp() {
         </a>
         <a href="#workflow" className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1">
           Workflow
+        </a>
+        <a href="#gallery3d" className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1">
+          3D Gallery
         </a>
         <a href="#uploads" className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1">
           Uploads
@@ -1162,6 +1285,155 @@ export function ComfyApp() {
                 <p className="text-[11px] text-zinc-600">Noch keine Bilder für diese Prompt-ID.</p>
               ) : null}
             </div>
+          </div>
+
+          <div id="gallery3d" className="scroll-mt-20 rounded-lg border border-zinc-800 bg-zinc-950/80 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium text-zinc-300">3D Gallery / Asset Library</p>
+                <p className="text-[11px] text-zinc-500">
+                  Sammlung, Preview und Feinschliff für deine 3D-Assets.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void refreshAssets3d()}
+                className="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300"
+              >
+                Aktualisieren
+              </button>
+            </div>
+
+            {assets3d.length > 0 ? (
+              <div className="mt-3 grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)]">
+                <div className="max-h-[560px] space-y-2 overflow-auto pr-1">
+                  {assets3d.map((asset) => (
+                    <button
+                      key={asset.relativePath}
+                      type="button"
+                      onClick={() => applySelected3dAsset(asset)}
+                      className={`w-full rounded border p-2 text-left ${selected3dPath === asset.relativePath ? "border-violet-500 bg-violet-950/30" : "border-zinc-800 bg-zinc-900"}`}
+                    >
+                      <p className="truncate text-xs text-zinc-200">
+                        {asset.metadata.title || getOutputFilename(asset.relativePath)}
+                      </p>
+                      <p className="truncate text-[11px] text-zinc-500">{asset.relativePath}</p>
+                      <div className="mt-1 flex items-center justify-between text-[11px]">
+                        <span className="text-zinc-500">.{asset.extension}</span>
+                        <span className="text-zinc-400">{asset.metadata.stage || "draft"}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {selected3dAsset ? (
+                  <div className="space-y-3">
+                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+                      <div className="rounded border border-zinc-800 bg-zinc-900 p-2">
+                        {selected3dAsset.previewable ? (
+                          <div ref={modelViewerRef} className="h-[360px] w-full" />
+                        ) : (
+                          <div className="flex h-[360px] items-center justify-center rounded bg-zinc-950 text-center text-xs text-zinc-500">
+                            Kein Live-Preview für .{selected3dAsset.extension}. Datei bleibt downloadbar.
+                          </div>
+                        )}
+                        <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                          <a href={selected3dAsset.url} target="_blank" rel="noreferrer" className="text-emerald-400">
+                            Datei öffnen / downloaden
+                          </a>
+                          <button type="button" onClick={useSelected3dAsImageTo3dSource} className="text-sky-400">
+                            Als Image→3D Quelle nutzen
+                          </button>
+                          <button type="button" onClick={copySelected3dPrompt} className="text-violet-400">
+                            Polish-Prompt → Generator
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 rounded border border-zinc-800 bg-zinc-900 p-3">
+                        <input
+                          value={asset3dDraft.title || ""}
+                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, title: e.target.value }))}
+                          placeholder="Titel"
+                          className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                        />
+                        <input
+                          value={asset3dDraft.collection || ""}
+                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, collection: e.target.value }))}
+                          placeholder="Collection / Serie"
+                          className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                        />
+                        <input
+                          value={asset3dTags}
+                          onChange={(e) => setAsset3dTags(e.target.value)}
+                          placeholder="Tags, comma separated"
+                          className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                        />
+                        <select
+                          value={asset3dDraft.stage || "draft"}
+                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, stage: e.target.value as "draft" | "polish" | "final" }))}
+                          className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                        >
+                          <option value="draft">Draft</option>
+                          <option value="polish">Polish</option>
+                          <option value="final">Final</option>
+                        </select>
+                        <textarea
+                          value={asset3dDraft.polishPrompt || ""}
+                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, polishPrompt: e.target.value }))}
+                          placeholder="Polish-Prompt / Rework-Idee"
+                          className="min-h-20 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                        />
+                        <textarea
+                          value={asset3dDraft.notes || ""}
+                          onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, notes: e.target.value }))}
+                          placeholder="Notizen / Feinschliff"
+                          className="min-h-20 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                        />
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={asset3dDraft.scale ?? 1}
+                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, scale: Number(e.target.value) }))}
+                            placeholder="Scale"
+                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                          />
+                          <input
+                            type="number"
+                            step="1"
+                            value={asset3dDraft.rotationY ?? 0}
+                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, rotationY: Number(e.target.value) }))}
+                            placeholder="Y Rotation"
+                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                          />
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={asset3dDraft.exposure ?? 1}
+                            onChange={(e) => setAsset3dDraft((prev) => ({ ...prev, exposure: Number(e.target.value) }))}
+                            placeholder="Exposure"
+                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-2 text-xs text-zinc-200"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          disabled={asset3dSaving}
+                          onClick={() => void saveSelected3dAsset()}
+                          className="w-full rounded bg-emerald-500 px-3 py-2 text-xs font-medium text-zinc-950 disabled:opacity-50"
+                        >
+                          {asset3dSaving ? "Speichert…" : "Asset speichern"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-3 text-[11px] text-zinc-500">
+                Noch keine 3D-Dateien in den Uploads. Lade `.glb`, `.gltf`, `.obj`, `.ply`, `.stl`, `.fbx` oder `.usdz` hoch.
+              </p>
+            )}
           </div>
 
           <div id="uploads" className="scroll-mt-20 rounded-lg border border-zinc-800 bg-zinc-950/80 p-3">

@@ -128,12 +128,56 @@ export interface UploadListItem {
   updatedAt: string;
 }
 
+export interface Asset3DMetadata {
+  title?: string;
+  collection?: string;
+  tags?: string[];
+  notes?: string;
+  polishPrompt?: string;
+  stage?: "draft" | "polish" | "final";
+  scale?: number;
+  rotationY?: number;
+  exposure?: number;
+  updatedAt?: string;
+}
+
+export interface Asset3DItem {
+  relativePath: string;
+  url: string;
+  size: number;
+  updatedAt: string;
+  extension: string;
+  previewable: boolean;
+  metadata: Asset3DMetadata;
+}
+
 export async function listLocalUploads(query = ""): Promise<UploadListItem[]> {
   const q = query ? `?query=${encodeURIComponent(query)}` : "";
   const res = await fetch(`/api/uploads${q}`);
   if (!res.ok) throw new Error(await res.text());
   const data = (await res.json()) as { files: UploadListItem[] };
   return data.files;
+}
+
+export async function listAssets3dApi(): Promise<Asset3DItem[]> {
+  const res = await fetch("/api/assets3d", { cache: "no-store" });
+  if (!res.ok) throw new Error(await res.text());
+  const data = (await res.json()) as { assets: Asset3DItem[] };
+  return data.assets;
+}
+
+export async function updateAsset3dApi(
+  relativePath: string,
+  metadata: Asset3DMetadata,
+): Promise<Asset3DMetadata> {
+  const res = await fetch("/api/assets3d", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ relativePath, metadata }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const data = (await res.json()) as { metadata: Asset3DMetadata };
+  return data.metadata;
 }
 
 export async function deleteLocalUpload(relativePath: string): Promise<void> {
